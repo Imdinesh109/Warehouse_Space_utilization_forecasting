@@ -17,53 +17,43 @@ st.set_page_config(
 )
 
 # =========================================================
-# DYNAMIC THEME TEXT COLORS
-# =========================================================
-# These colors automatically remain visible in both
-# dark mode and light mode.
-
-dynamic_heading_color = "var(--text-color)"
-dynamic_metric_text = "var(--text-color)"
-
-# =========================================================
 # CUSTOM STYLING
 # =========================================================
-st.markdown(f"""
+st.markdown("""
 <style>
 
-.block-container {{
+.block-container {
     max-width: 95%;
     padding-top: 2rem;
-}}
+}
 
-div.stButton > button {{
+div.stButton > button {
     width: 100% !important;
     font-weight: 600;
     height: 52px;
     font-size: 15px;
-}}
+}
 
-.stMetric {{
+.stMetric {
     border: 1px solid #3f3f3f;
     padding: 15px;
     border-radius: 6px;
-    background-color: rgba(28, 32, 38, 0.75);
-}}
+    background-color: #1d222b;
+}
 
-.category-header {{
+.category-header {
     border-left: 3px solid #0288d1;
     padding-left: 10px;
     margin-top: 10px;
     margin-bottom: 15px;
-}}
+    color: #ffffff;
+}
 
-.dynamic-heading {{
-    color: {dynamic_heading_color};
-}}
-
-.metric-heading {{
-    color: {dynamic_metric_text};
-}}
+.status-box {
+    padding: 15px;
+    border-radius: 5px;
+    font-weight: 600;
+}
 
 </style>
 """, unsafe_allow_html=True)
@@ -201,13 +191,7 @@ col_left, col_mid, col_right = st.columns(3)
 with col_left:
 
     st.markdown(
-        f'''
-        <div class="category-header">
-            <h4 class="dynamic-heading">
-                Structural Footprint
-            </h4>
-        </div>
-        ''',
+        '<div class="category-header"><h4>Structural Footprint</h4></div>',
         unsafe_allow_html=True
     )
 
@@ -276,13 +260,7 @@ with col_left:
 with col_mid:
 
     st.markdown(
-        f'''
-        <div class="category-header">
-            <h4 class="dynamic-heading">
-                Floor Telemetry
-            </h4>
-        </div>
-        ''',
+        '<div class="category-header"><h4>Floor Telemetry</h4></div>',
         unsafe_allow_html=True
     )
 
@@ -354,13 +332,7 @@ with col_mid:
 with col_right:
 
     st.markdown(
-        f'''
-        <div class="category-header">
-            <h4 class="dynamic-heading">
-                Chronological Context
-            </h4>
-        </div>
-        ''',
+        '<div class="category-header"><h4>Chronological Context</h4></div>',
         unsafe_allow_html=True
     )
 
@@ -424,6 +396,9 @@ if execute_analysis:
 
     try:
 
+        # =================================================
+        # TARGET DATETIME
+        # =================================================
         base_datetime = datetime.datetime.combine(
             selected_date,
             selected_time
@@ -437,6 +412,9 @@ if execute_analysis:
         day_of_week = future_datetime.weekday()
         month_of_year = future_datetime.month
 
+        # =================================================
+        # FUTURE STATE ADJUSTMENTS
+        # =================================================
         adjusted_congestion = min(
             1.0,
             congestion_index + (forecast_horizon * 0.0025)
@@ -452,6 +430,21 @@ if execute_analysis:
             hours_until_departure - forecast_horizon
         )
 
+        if forecast_horizon <= 24:
+
+            adjusted_demand = forecasted_demand_next_24h
+
+        elif forecast_horizon <= 48:
+
+            adjusted_demand = forecasted_demand_next_48h
+
+        else:
+
+            adjusted_demand = forecasted_demand_next_72h
+
+        # =================================================
+        # INFERENCE DATAFRAME
+        # =================================================
         input_data = {
 
             "uld_count": [float(uld_count)],
@@ -523,6 +516,9 @@ if execute_analysis:
 
         df_input = pd.DataFrame(input_data)
 
+        # =================================================
+        # TRANSFORMATIONS
+        # =================================================
         low_cardinality_headers = production_ohe.get_feature_names_out(
             low_cardinality_categoricals
         )
@@ -554,6 +550,9 @@ if execute_analysis:
             axis=1
         )
 
+        # =================================================
+        # MODEL PREDICTION
+        # =================================================
         predicted_occupancy_rate = production_model.predict(
             X_inference
         )[0]
@@ -564,6 +563,9 @@ if execute_analysis:
             100.0
         )
 
+        # =================================================
+        # SPACE CALCULATIONS
+        # =================================================
         zone_capacity_m3 = STORAGE_CAPACITIES[
             (
                 storage_type_input,
@@ -580,16 +582,9 @@ if execute_analysis:
         )
 
         # =================================================
-        # DYNAMIC METRIC HEADING
+        # RESULT SECTION
         # =================================================
-        st.markdown(
-            f'''
-            <h2 class="metric-heading">
-                Real-Time Operational Space Diagnostics
-            </h2>
-            ''',
-            unsafe_allow_html=True
-        )
+        st.header("Real-Time Operational Space Diagnostics")
 
         metric_col1, metric_col2, metric_col3 = st.columns(3)
 
@@ -616,6 +611,9 @@ if execute_analysis:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # =================================================
+        # STATUS
+        # =================================================
         if predicted_occupancy_rate >= 90:
 
             gauge_color = "#dc3545"
@@ -640,6 +638,9 @@ if execute_analysis:
                 f"Operationally stable utilization forecast ({predicted_occupancy_rate:.2f}%)."
             )
 
+        # =================================================
+        # GAUGE VISUALIZATION
+        # =================================================
         fig_gauge = go.Figure(
 
             go.Indicator(
@@ -714,6 +715,46 @@ if execute_analysis:
         st.plotly_chart(
             fig_gauge,
             use_container_width=True
+        )
+
+        # =================================================
+        # FORECAST SUMMARY
+        # =================================================
+        st.subheader("Forecast Summary")
+
+        summary_df = pd.DataFrame({
+
+            "Parameter": [
+
+                "Forecast Horizon",
+                "Target Forecast Timestamp",
+                "Flow Direction",
+                "Storage Type",
+                "Cargo Category",
+                "Selected Route",
+                "Aircraft Type",
+                "Adjusted Congestion Index"
+
+            ],
+
+            "Value": [
+
+                f"{forecast_horizon} Hours",
+                future_datetime.strftime("%Y-%m-%d %H:%M"),
+                flow_direction_input,
+                storage_type_input,
+                iata_shc_input,
+                route_input,
+                aircraft_type,
+                round(adjusted_congestion, 4)
+
+            ]
+        })
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            hide_index=True
         )
 
     except Exception as e:
