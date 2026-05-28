@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+plotly
+category_encoders
+lightgbm
+matplotlib
+seaborn
+scikit-learn
