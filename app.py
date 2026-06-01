@@ -107,17 +107,65 @@ high_cardinality_categorical = pkg[
 @st.cache_data
 def load_analytics_data():
 
-    df = pd.read_csv(
-        "jeddah_air_cargo_occupancy_master.csv"
-    )
+    try:
 
-    df['timestamp'] = pd.to_datetime(
-        df['timestamp']
-    )
+        df = pd.read_csv(
+            "jeddah_air_cargo_occupancy_master.csv"
+        )
 
-    return df
+        # auto detect timestamp column
+        possible_timestamp_cols = [
+            "timestamp",
+            "datetime",
+            "date_time",
+            "event_timestamp"
+        ]
+
+        for col in possible_timestamp_cols:
+
+            if col in df.columns:
+
+                df[col] = pd.to_datetime(df[col])
+
+                if col != "timestamp":
+                    df.rename(
+                        columns={col: "timestamp"},
+                        inplace=True
+                    )
+
+                break
+
+        return df
+
+    except Exception as e:
+
+        st.error(
+            f"Analytics dataset loading failed: {e}"
+        )
+
+        st.stop()
 
 analytics_df = load_analytics_data()
+
+# =========================================================
+# AUTO DETECT OCCUPANCY COLUMN
+# =========================================================
+occupancy_column = None
+
+possible_occupancy_columns = [
+
+    "predicted_occupancy_rate_24h",
+    "warehouse_occupancy_percent",
+    "occupancy_rate",
+    "occupancy_percent"
+]
+
+for col in possible_occupancy_columns:
+
+    if col in analytics_df.columns:
+
+        occupancy_column = col
+        break
 
 # =========================================================
 # DOMAIN CONFIGURATION
@@ -229,9 +277,6 @@ with tab1:
         "Operational Parameter Input Console"
     )
 
-    # =====================================================
-    # INPUT PANELS
-    # =====================================================
     col_left, col_mid, col_right = st.columns(3)
 
     # =====================================================
@@ -448,9 +493,6 @@ with tab1:
             datetime.datetime.now().time()
         )
 
-    # =====================================================
-    # EXECUTE BUTTON
-    # =====================================================
     st.markdown("<br>", unsafe_allow_html=True)
 
     execute_analysis = st.button(
@@ -505,78 +547,26 @@ with tab1:
 
             input_data = {
 
-                "uld_count": [
-                    float(uld_count)
-                ],
-
-                "expected_flight_volume_kg": [
-                    float(expected_flight_volume_kg)
-                ],
-
-                "hours_until_arrival": [
-                    float(adjusted_arrival)
-                ],
-
-                "hours_until_departure": [
-                    float(adjusted_departure)
-                ],
-
-                "historical_dwell_lag_24h": [
-                    float(historical_dwell_lag_24h)
-                ],
-
-                "congestion_index": [
-                    float(adjusted_congestion)
-                ],
-
-                "forecasted_demand_next_24h": [
-                    float(forecasted_demand_next_24h)
-                ],
-
-                "forecasted_demand_next_48h": [
-                    float(forecasted_demand_next_48h)
-                ],
-
-                "forecasted_demand_next_72h": [
-                    float(forecasted_demand_next_72h)
-                ],
-
-                "hour_of_day": [
-                    int(hour_of_day)
-                ],
-
-                "day_of_week": [
-                    int(day_of_week)
-                ],
-
-                "month_of_year": [
-                    int(month_of_year)
-                ],
-
-                "flow_direction": [
-                    flow_direction_input
-                ],
-
-                "storage_type": [
-                    storage_type_input
-                ],
-
-                "iata_shc": [
-                    iata_shc_input
-                ],
-
-                "build_up_status": [
-                    build_up_status_input
-                ],
-
-                "route": [
-                    route_input
-                ]
+                "uld_count": [float(uld_count)],
+                "expected_flight_volume_kg": [float(expected_flight_volume_kg)],
+                "hours_until_arrival": [float(adjusted_arrival)],
+                "hours_until_departure": [float(adjusted_departure)],
+                "historical_dwell_lag_24h": [float(historical_dwell_lag_24h)],
+                "congestion_index": [float(adjusted_congestion)],
+                "forecasted_demand_next_24h": [float(forecasted_demand_next_24h)],
+                "forecasted_demand_next_48h": [float(forecasted_demand_next_48h)],
+                "forecasted_demand_next_72h": [float(forecasted_demand_next_72h)],
+                "hour_of_day": [int(hour_of_day)],
+                "day_of_week": [int(day_of_week)],
+                "month_of_year": [int(month_of_year)],
+                "flow_direction": [flow_direction_input],
+                "storage_type": [storage_type_input],
+                "iata_shc": [iata_shc_input],
+                "build_up_status": [build_up_status_input],
+                "route": [route_input]
             }
 
-            df_input = pd.DataFrame(
-                input_data
-            )
+            df_input = pd.DataFrame(input_data)
 
             low_cardinality_headers = (
                 production_ohe.get_feature_names_out(
@@ -642,9 +632,6 @@ with tab1:
                 computed_occupied_m3
             )
 
-            # =================================================
-            # KPI SECTION
-            # =================================================
             st.header(
                 "Real-Time Operational Space Diagnostics"
             )
@@ -672,35 +659,6 @@ with tab1:
                     f"{computed_available_m3:,.2f} m3"
                 )
 
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            if predicted_occupancy_rate >= 90:
-
-                gauge_color = "#dc3545"
-
-                st.error(
-                    f"Critical saturation threshold detected ({predicted_occupancy_rate:.2f}%)."
-                )
-
-            elif predicted_occupancy_rate >= 75:
-
-                gauge_color = "#ffc107"
-
-                st.warning(
-                    f"High congestion environment predicted ({predicted_occupancy_rate:.2f}%)."
-                )
-
-            else:
-
-                gauge_color = "#28a745"
-
-                st.success(
-                    f"Operationally stable utilization forecast ({predicted_occupancy_rate:.2f}%)."
-                )
-
-            # =================================================
-            # GAUGE CHART
-            # =================================================
             fig_gauge = go.Figure(
 
                 go.Indicator(
@@ -726,29 +684,8 @@ with tab1:
                         },
 
                         "bar": {
-                            "color": gauge_color
-                        },
-
-                        "steps": [
-
-                            {
-                                "range": [0, 75],
-                                "color":
-                                "rgba(40,167,69,0.15)"
-                            },
-
-                            {
-                                "range": [75, 90],
-                                "color":
-                                "rgba(255,193,7,0.15)"
-                            },
-
-                            {
-                                "range": [90, 100],
-                                "color":
-                                "rgba(220,53,69,0.15)"
-                            }
-                        ]
+                            "color": "#0288d1"
+                        }
                     }
                 )
             )
@@ -777,297 +714,344 @@ with tab2:
         "Warehouse Operations Analytics Dashboard"
     )
 
-    # =====================================================
-    # FILTERS
-    # =====================================================
-    filter_col1, filter_col2 = st.columns(2)
+    if occupancy_column is None:
 
-    with filter_col1:
-
-        storage_filter = st.multiselect(
-            "Filter Storage Type",
-            options=sorted(
-                analytics_df[
-                    'storage_type'
-                ].unique().tolist()
-            ),
-            default=sorted(
-                analytics_df[
-                    'storage_type'
-                ].unique().tolist()
-            )
+        st.error(
+            "No occupancy column found in dataset."
         )
 
-    with filter_col2:
-
-        cargo_filter = st.multiselect(
-            "Filter Cargo Type",
-            options=sorted(
-                analytics_df[
-                    'iata_shc'
-                ].unique().tolist()
-            ),
-            default=sorted(
-                analytics_df[
-                    'iata_shc'
-                ].unique().tolist()
-            )
+        st.write(
+            analytics_df.columns.tolist()
         )
 
-    # =====================================================
-    # FILTER DATA
-    # =====================================================
-    filtered_df = analytics_df[
+    else:
 
-        (
-            analytics_df['storage_type']
-            .isin(storage_filter)
-        )
+        # =================================================
+        # FILTERS
+        # =================================================
+        filter_col1, filter_col2 = st.columns(2)
 
-        &
+        with filter_col1:
 
-        (
-            analytics_df['iata_shc']
-            .isin(cargo_filter)
-        )
-    ]
+            if 'storage_type' in analytics_df.columns:
 
-    # =====================================================
-    # KPI SECTION
-    # =====================================================
-    st.markdown("---")
+                storage_filter = st.multiselect(
+                    "Filter Storage Type",
+                    options=sorted(
+                        analytics_df[
+                            'storage_type'
+                        ].dropna().unique().tolist()
+                    ),
+                    default=sorted(
+                        analytics_df[
+                            'storage_type'
+                        ].dropna().unique().tolist()
+                    )
+                )
 
-    k1, k2, k3, k4 = st.columns(4)
+            else:
 
-    with k1:
+                storage_filter = []
 
-        avg_occ = (
-            filtered_df[
-                'predicted_occupancy_rate_24h'
-            ].mean()
-        )
+        with filter_col2:
 
-        st.metric(
-            "Average Occupancy",
-            f"{avg_occ:.2f}%"
-        )
+            if 'iata_shc' in analytics_df.columns:
 
-    with k2:
+                cargo_filter = st.multiselect(
+                    "Filter Cargo Type",
+                    options=sorted(
+                        analytics_df[
+                            'iata_shc'
+                        ].dropna().unique().tolist()
+                    ),
+                    default=sorted(
+                        analytics_df[
+                            'iata_shc'
+                        ].dropna().unique().tolist()
+                    )
+                )
 
-        avg_dwell = (
-            filtered_df[
-                'historical_dwell_lag_24h'
-            ].mean()
-        )
+            else:
 
-        st.metric(
-            "Average Dwell Lag",
-            f"{avg_dwell:.1f} hrs"
-        )
+                cargo_filter = []
 
-    with k3:
+        filtered_df = analytics_df.copy()
 
-        avg_congestion = (
-            filtered_df[
-                'congestion_index'
-            ].mean()
-        )
+        if (
+            'storage_type' in filtered_df.columns
+            and
+            len(storage_filter) > 0
+        ):
 
-        st.metric(
-            "Average Congestion",
-            f"{avg_congestion:.2f}"
-        )
-
-    with k4:
-
-        avg_volume = (
-            filtered_df[
-                'expected_flight_volume_kg'
-            ].mean()
-        )
-
-        st.metric(
-            "Avg Flight Volume",
-            f"{avg_volume:,.0f} kg"
-        )
-
-    st.markdown("---")
-
-    # =====================================================
-    # CHART ROW 1
-    # =====================================================
-    row1_col1, row1_col2 = st.columns(2)
-
-    with row1_col1:
-
-        st.markdown(
-            "### Average Occupancy by Storage Type"
-        )
-
-        storage_summary = (
-            filtered_df.groupby(
-                'storage_type'
-            )[
-                'predicted_occupancy_rate_24h'
+            filtered_df = filtered_df[
+                filtered_df['storage_type']
+                .isin(storage_filter)
             ]
-            .mean()
-            .reset_index()
-        )
 
-        fig_storage = px.bar(
-            storage_summary,
-            x='storage_type',
-            y='predicted_occupancy_rate_24h',
-            text_auto=True
-        )
+        if (
+            'iata_shc' in filtered_df.columns
+            and
+            len(cargo_filter) > 0
+        ):
 
-        fig_storage.update_layout(
-            height=350,
-            showlegend=False
-        )
+            filtered_df = filtered_df[
+                filtered_df['iata_shc']
+                .isin(cargo_filter)
+            ]
 
-        st.plotly_chart(
-            fig_storage,
-            use_container_width=True
-        )
+        st.markdown("---")
 
-    with row1_col2:
+        # =================================================
+        # KPI CARDS
+        # =================================================
+        k1, k2, k3, k4 = st.columns(4)
 
-        st.markdown(
-            "### Cargo Category Distribution"
-        )
+        with k1:
 
-        cargo_summary = (
-            filtered_df.groupby(
-                'iata_shc'
+            st.metric(
+                "Average Occupancy",
+                f"{filtered_df[occupancy_column].mean():.2f}%"
             )
-            .size()
-            .reset_index(name='Count')
-        )
 
-        fig_cargo = px.bar(
-            cargo_summary,
-            x='iata_shc',
-            y='Count',
-            text_auto=True
-        )
+        with k2:
 
-        fig_cargo.update_layout(
-            height=350,
-            showlegend=False
-        )
+            if 'historical_dwell_lag_24h' in filtered_df.columns:
 
-        st.plotly_chart(
-            fig_cargo,
-            use_container_width=True
-        )
+                st.metric(
+                    "Average Dwell Lag",
+                    f"{filtered_df['historical_dwell_lag_24h'].mean():.1f} hrs"
+                )
 
-    st.markdown("---")
+            else:
 
-    # =====================================================
-    # CHART ROW 2
-    # =====================================================
-    row2_col1, row2_col2 = st.columns(2)
+                st.metric(
+                    "Average Dwell Lag",
+                    "N/A"
+                )
 
-    with row2_col1:
+        with k3:
 
+            if 'congestion_index' in filtered_df.columns:
+
+                st.metric(
+                    "Average Congestion",
+                    f"{filtered_df['congestion_index'].mean():.2f}"
+                )
+
+            else:
+
+                st.metric(
+                    "Average Congestion",
+                    "N/A"
+                )
+
+        with k4:
+
+            if 'expected_flight_volume_kg' in filtered_df.columns:
+
+                st.metric(
+                    "Average Flight Volume",
+                    f"{filtered_df['expected_flight_volume_kg'].mean():,.0f} kg"
+                )
+
+            else:
+
+                st.metric(
+                    "Average Flight Volume",
+                    "N/A"
+                )
+
+        st.markdown("---")
+
+        # =================================================
+        # CHART ROW 1
+        # =================================================
+        row1_col1, row1_col2 = st.columns(2)
+
+        with row1_col1:
+
+            st.markdown(
+                "### Average Occupancy by Storage Type"
+            )
+
+            if 'storage_type' in filtered_df.columns:
+
+                storage_summary = (
+                    filtered_df.groupby(
+                        'storage_type'
+                    )[
+                        occupancy_column
+                    ]
+                    .mean()
+                    .reset_index()
+                )
+
+                fig_storage = px.bar(
+                    storage_summary,
+                    x='storage_type',
+                    y=occupancy_column,
+                    text_auto=True
+                )
+
+                fig_storage.update_layout(
+                    height=350
+                )
+
+                st.plotly_chart(
+                    fig_storage,
+                    use_container_width=True
+                )
+
+        with row1_col2:
+
+            st.markdown(
+                "### Cargo Category Distribution"
+            )
+
+            if 'iata_shc' in filtered_df.columns:
+
+                cargo_summary = (
+                    filtered_df.groupby(
+                        'iata_shc'
+                    )
+                    .size()
+                    .reset_index(name='Count')
+                )
+
+                fig_cargo = px.bar(
+                    cargo_summary,
+                    x='iata_shc',
+                    y='Count',
+                    text_auto=True
+                )
+
+                fig_cargo.update_layout(
+                    height=350
+                )
+
+                st.plotly_chart(
+                    fig_cargo,
+                    use_container_width=True
+                )
+
+        st.markdown("---")
+
+        # =================================================
+        # CHART ROW 2
+        # =================================================
+        row2_col1, row2_col2 = st.columns(2)
+
+        with row2_col1:
+
+            st.markdown(
+                "### Congestion by Storage Type"
+            )
+
+            if (
+                'storage_type' in filtered_df.columns
+                and
+                'congestion_index' in filtered_df.columns
+            ):
+
+                congestion_summary = (
+                    filtered_df.groupby(
+                        'storage_type'
+                    )[
+                        'congestion_index'
+                    ]
+                    .mean()
+                    .reset_index()
+                )
+
+                fig_congestion = px.bar(
+                    congestion_summary,
+                    x='storage_type',
+                    y='congestion_index',
+                    text_auto=True
+                )
+
+                fig_congestion.update_layout(
+                    height=350
+                )
+
+                st.plotly_chart(
+                    fig_congestion,
+                    use_container_width=True
+                )
+
+        with row2_col2:
+
+            st.markdown(
+                "### Flight Volume by Cargo Type"
+            )
+
+            if (
+                'iata_shc' in filtered_df.columns
+                and
+                'expected_flight_volume_kg' in filtered_df.columns
+            ):
+
+                volume_summary = (
+                    filtered_df.groupby(
+                        'iata_shc'
+                    )[
+                        'expected_flight_volume_kg'
+                    ]
+                    .mean()
+                    .reset_index()
+                )
+
+                fig_volume = px.bar(
+                    volume_summary,
+                    x='iata_shc',
+                    y='expected_flight_volume_kg',
+                    text_auto=True
+                )
+
+                fig_volume.update_layout(
+                    height=350
+                )
+
+                st.plotly_chart(
+                    fig_volume,
+                    use_container_width=True
+                )
+
+        st.markdown("---")
+
+        # =================================================
+        # TREND GRAPH
+        # =================================================
         st.markdown(
-            "### Congestion by Storage Type"
+            "### Daily Occupancy Trend"
         )
 
-        congestion_summary = (
-            filtered_df.groupby(
-                'storage_type'
-            )[
-                'congestion_index'
-            ]
-            .mean()
-            .reset_index()
-        )
+        if 'timestamp' in filtered_df.columns:
 
-        fig_congestion = px.bar(
-            congestion_summary,
-            x='storage_type',
-            y='congestion_index',
-            text_auto=True
-        )
+            trend_df = (
+                filtered_df.groupby(
+                    filtered_df[
+                        'timestamp'
+                    ].dt.date
+                )[
+                    occupancy_column
+                ]
+                .mean()
+                .reset_index()
+            )
 
-        fig_congestion.update_layout(
-            height=350,
-            showlegend=False
-        )
+            fig_trend = px.line(
+                trend_df,
+                x='timestamp',
+                y=occupancy_column,
+                markers=True
+            )
 
-        st.plotly_chart(
-            fig_congestion,
-            use_container_width=True
-        )
+            fig_trend.update_layout(
+                height=400
+            )
 
-    with row2_col2:
-
-        st.markdown(
-            "### Flight Volume by Cargo Type"
-        )
-
-        volume_summary = (
-            filtered_df.groupby(
-                'iata_shc'
-            )[
-                'expected_flight_volume_kg'
-            ]
-            .mean()
-            .reset_index()
-        )
-
-        fig_volume = px.bar(
-            volume_summary,
-            x='iata_shc',
-            y='expected_flight_volume_kg',
-            text_auto=True
-        )
-
-        fig_volume.update_layout(
-            height=350,
-            showlegend=False
-        )
-
-        st.plotly_chart(
-            fig_volume,
-            use_container_width=True
-        )
-
-    st.markdown("---")
-
-    # =====================================================
-    # TREND GRAPH
-    # =====================================================
-    st.markdown(
-        "### Daily Occupancy Trend"
-    )
-
-    trend_df = (
-        filtered_df.groupby(
-            filtered_df[
-                'timestamp'
-            ].dt.date
-        )[
-            'predicted_occupancy_rate_24h'
-        ]
-        .mean()
-        .reset_index()
-    )
-
-    fig_trend = px.line(
-        trend_df,
-        x='timestamp',
-        y='predicted_occupancy_rate_24h',
-        markers=True
-    )
-
-    fig_trend.update_layout(
-        height=400
-    )
-
-    st.plotly_chart(
-        fig_trend,
-        use_container_width=True
-    )
+            st.plotly_chart(
+                fig_trend,
+                use_container_width=True
+            )
