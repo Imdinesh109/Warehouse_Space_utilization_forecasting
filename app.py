@@ -1017,41 +1017,4 @@ with tab2:
                     use_container_width=True
                 )
 
-        st.markdown("---")
-
-        # =================================================
-        # TREND GRAPH
-        # =================================================
-        st.markdown(
-            "### Daily Occupancy Trend"
-        )
-
-        if 'timestamp' in filtered_df.columns:
-
-            trend_df = (
-                filtered_df.groupby(
-                    filtered_df[
-                        'timestamp'
-                    ].dt.date
-                )[
-                    occupancy_column
-                ]
-                .mean()
-                .reset_index()
-            )
-
-            fig_trend = px.line(
-                trend_df,
-                x='timestamp',
-                y=occupancy_column,
-                markers=True
-            )
-
-            fig_trend.update_layout(
-                height=400
-            )
-
-            st.plotly_chart(
-                fig_trend,
-                use_container_width=True
-            )
+        
