@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import plotly.graph_objects as go
+import plotly.express as px
 import datetime
 import warnings
 
@@ -17,7 +18,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# CUSTOM STYLING (THEME AGNOSTIC)
+# CUSTOM STYLING
 # =========================================================
 st.markdown("""
 <style>
@@ -34,7 +35,6 @@ div.stButton > button {
     font-size: 15px;
 }
 
-/* Uses theme's secondary background and dynamic borders/text */
 .stMetric {
     border: 1px solid var(--border-color);
     padding: 15px;
@@ -42,7 +42,6 @@ div.stButton > button {
     background-color: var(--secondary-background-color);
 }
 
-/* Category header text dynamically adapts to light/dark modes */
 .category-header {
     border-left: 3px solid #0288d1;
     padding-left: 10px;
@@ -87,6 +86,24 @@ low_cardinality_categoricals = pkg["low_cardinality_categoricals"]
 high_cardinality_categorical = pkg["high_cardinality_categorical"]
 
 # =========================================================
+# LOAD ANALYTICS DATASET
+# =========================================================
+@st.cache_data
+def load_analytics_data():
+
+    df = pd.read_csv(
+        "jeddah_air_cargo_occupancy_master.csv"
+    )
+
+    df['timestamp'] = pd.to_datetime(
+        df['timestamp']
+    )
+
+    return df
+
+analytics_df = load_analytics_data()
+
+# =========================================================
 # DOMAIN CONFIGURATION
 # =========================================================
 ROUTE_PROFILES = {
@@ -116,218 +133,848 @@ VALID_COMBINATIONS = [
 # =========================================================
 st.title("Warehouse Space Utilization Forecasting")
 st.markdown("---")
-st.subheader("Operational Parameter Input Console")
 
 # =========================================================
-# INPUT PANELS
+# TABS
 # =========================================================
-col_left, col_mid, col_right = st.columns(3)
-
-# =========================================================
-# COLUMN 1
-# =========================================================
-with col_left:
-    st.markdown('<div class="category-header"><h4>Structural Footprint</h4></div>', unsafe_allow_html=True)
-    
-    flow_direction_input = st.selectbox("flow direction", ["Import", "Export"])
-
-    if flow_direction_input == "Import":
-        storage_type_input = st.selectbox("storage type", ["General", "Cold Chain", "Dangerous Goods"])
-    else:
-        storage_type_input = st.selectbox("storage type", ["General", "VIP"])
-
-    matched_set = [c for c in VALID_COMBINATIONS if c["flow_direction"] == flow_direction_input and c["storage_type"] == storage_type_input]
-    available_shcs = [m["shc"] for m in matched_set]
-    iata_shc_input = st.selectbox("iata shc", available_shcs)
-
-    final_match = [m for m in matched_set if m["shc"] == iata_shc_input][0]
-    temp_range = final_match["temp"]
-
-    st.text_input("temp range", value=temp_range, disabled=True)
-    available_routes = ROUTE_PROFILES[flow_direction_input]
-    route_input = st.selectbox("route", available_routes)
-    aircraft_type = st.selectbox("aircraft type", ["Freighter", "Belly"])
+tab1, tab2 = st.tabs([
+    "Forecast Prediction",
+    "Analytics Dashboard"
+])
 
 # =========================================================
-# COLUMN 2
+# TAB 1 : PREDICTION
 # =========================================================
-with col_mid:
-    st.markdown('<div class="category-header"><h4>Floor Telemetry</h4></div>', unsafe_allow_html=True)
+with tab1:
 
-    if aircraft_type == "Freighter":
-        expected_flight_volume_kg = st.slider("expected flight volume kg", 40000, 100000, 75000)
-    else:
-        expected_flight_volume_kg = st.slider("expected flight volume kg", 1000, 5000, 3000)
+    st.subheader("Operational Parameter Input Console")
 
-    if flow_direction_input == "Import":
-        build_up_status_input = st.selectbox("build up status", ["Not Applicable"], disabled=True)
-    else:
-        build_up_status_input = st.selectbox("build up status", ["Not Started", "In Progress"])
+    # =========================================================
+    # INPUT PANELS
+    # =========================================================
+    col_left, col_mid, col_right = st.columns(3)
 
-    uld_count = st.slider("uld count", 0, 250, 155)
-    hours_until_arrival = st.slider("hours until arrival", 0, 72, 12)
-    hours_until_departure = st.slider("hours until departure", 0, 72, 18)
-    historical_dwell_lag_24h = st.slider("historical dwell lag 24h", 6.0, 55.0, 36.0, step=0.1)
+    # =========================================================
+    # COLUMN 1
+    # =========================================================
+    with col_left:
 
-# =========================================================
-# COLUMN 3
-# =========================================================
-with col_right:
-    st.markdown('<div class="category-header"><h4>Chronological Context</h4></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="category-header"><h4>Structural Footprint</h4></div>',
+            unsafe_allow_html=True
+        )
 
-    forecast_horizon = st.slider("forecast horizon hours", 24, 72, 24, step=1)
-    congestion_index = st.slider("congestion index", 0.0, 1.0, 0.8533, step=0.0001)
+        flow_direction_input = st.selectbox(
+            "flow direction",
+            ["Import", "Export"]
+        )
 
-    forecasted_demand_next_24h = st.number_input("forecasted demand next 24h", value=269.95)
-    forecasted_demand_next_48h = st.number_input("forecasted demand next 48h", value=539.90)
-    forecasted_demand_next_72h = st.number_input("forecasted demand next 72h", value=809.86)
+        if flow_direction_input == "Import":
 
-    selected_date = st.date_input("target date", datetime.date.today())
-    selected_time = st.time_input("target time", datetime.datetime.now().time())
+            storage_type_input = st.selectbox(
+                "storage type",
+                ["General", "Cold Chain", "Dangerous Goods"]
+            )
 
-# =========================================================
-# EXECUTE BUTTON
-# =========================================================
-st.markdown("<br>", unsafe_allow_html=True)
-execute_analysis = st.button("RUN PREDICTIVE CAPACITY ANALYSIS", type="primary")
-st.markdown("---")
-
-# =========================================================
-# PREDICTION EXECUTION
-# =========================================================
-if execute_analysis:
-    try:
-        base_datetime = datetime.datetime.combine(selected_date, selected_time)
-        future_datetime = base_datetime + datetime.timedelta(hours=forecast_horizon)
-
-        hour_of_day = future_datetime.hour
-        day_of_week = future_datetime.weekday()
-        month_of_year = future_datetime.month
-
-        adjusted_congestion = min(1.0, congestion_index + (forecast_horizon * 0.0025))
-        adjusted_arrival = max(0, hours_until_arrival - forecast_horizon)
-        adjusted_departure = max(0, hours_until_departure - forecast_horizon)
-
-        if forecast_horizon <= 24:
-            adjusted_demand = forecasted_demand_next_24h
-        elif forecast_horizon <= 48:
-            adjusted_demand = forecasted_demand_next_48h
         else:
-            adjusted_demand = forecasted_demand_next_72h
 
-        input_data = {
-            "uld_count": [float(uld_count)],
-            "expected_flight_volume_kg": [float(expected_flight_volume_kg)],
-            "hours_until_arrival": [float(adjusted_arrival)],
-            "hours_until_departure": [float(adjusted_departure)],
-            "historical_dwell_lag_24h": [float(historical_dwell_lag_24h)],
-            "congestion_index": [float(adjusted_congestion)],
-            "forecasted_demand_next_24h": [float(forecasted_demand_next_24h)],
-            "forecasted_demand_next_48h": [float(forecasted_demand_next_48h)],
-            "forecasted_demand_next_72h": [float(forecasted_demand_next_72h)],
-            "hour_of_day": [int(hour_of_day)],
-            "day_of_week": [int(day_of_week)],
-            "month_of_year": [int(month_of_year)],
-            "flow_direction": [flow_direction_input],
-            "storage_type": [storage_type_input],
-            "iata_shc": [iata_shc_input],
-            "build_up_status": [build_up_status_input],
-            "route": [route_input]
-        }
+            storage_type_input = st.selectbox(
+                "storage type",
+                ["General", "VIP"]
+            )
 
-        df_input = pd.DataFrame(input_data)
+        matched_set = [
+            c for c in VALID_COMBINATIONS
+            if c["flow_direction"] == flow_direction_input
+            and c["storage_type"] == storage_type_input
+        ]
 
-        low_cardinality_headers = production_ohe.get_feature_names_out(low_cardinality_categoricals)
-        scaled_num = pd.DataFrame(production_scaler.transform(df_input[numerical_features]), columns=numerical_features)
-        scaled_ohe = pd.DataFrame(production_ohe.transform(df_input[low_cardinality_categoricals]), columns=low_cardinality_headers)
-        scaled_te = production_te.transform(df_input[high_cardinality_categorical])
+        available_shcs = [
+            m["shc"] for m in matched_set
+        ]
 
-        X_inference = pd.concat([scaled_num, scaled_ohe, scaled_te], axis=1)
+        iata_shc_input = st.selectbox(
+            "iata shc",
+            available_shcs
+        )
 
-        predicted_occupancy_rate = production_model.predict(X_inference)[0]
-        predicted_occupancy_rate = np.clip(predicted_occupancy_rate, 5.0, 100.0)
+        final_match = [
+            m for m in matched_set
+            if m["shc"] == iata_shc_input
+        ][0]
 
-        zone_capacity_m3 = STORAGE_CAPACITIES[(storage_type_input, flow_direction_input)]
-        computed_occupied_m3 = (predicted_occupancy_rate / 100) * zone_capacity_m3
-        computed_available_m3 = zone_capacity_m3 - computed_occupied_m3
+        temp_range = final_match["temp"]
 
-        # =================================================
-        # RESULT SECTION
-        # =================================================
-        st.header("Real-Time Operational Space Diagnostics")
-        metric_col1, metric_col2, metric_col3 = st.columns(3)
+        st.text_input(
+            "temp range",
+            value=temp_range,
+            disabled=True
+        )
 
-        with metric_col1:
-            st.metric("Total Structural Capacity", f"{zone_capacity_m3:,.0f} m3")
-        with metric_col2:
-            st.metric("Predicted Occupied Volume", f"{computed_occupied_m3:,.2f} m3")
-        with metric_col3:
-            st.metric("Available Net Open Space", f"{computed_available_m3:,.2f} m3")
+        available_routes = ROUTE_PROFILES[
+            flow_direction_input
+        ]
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        route_input = st.selectbox(
+            "route",
+            available_routes
+        )
 
-        if predicted_occupancy_rate >= 90:
-            gauge_color = "#dc3545"
-            st.error(f"Critical saturation threshold detected ({predicted_occupancy_rate:.2f}%).")
-        elif predicted_occupancy_rate >= 75:
-            gauge_color = "#ffc107"
-            st.warning(f"High congestion environment predicted ({predicted_occupancy_rate:.2f}%).")
+        aircraft_type = st.selectbox(
+            "aircraft type",
+            ["Freighter", "Belly"]
+        )
+
+    # =========================================================
+    # COLUMN 2
+    # =========================================================
+    with col_mid:
+
+        st.markdown(
+            '<div class="category-header"><h4>Floor Telemetry</h4></div>',
+            unsafe_allow_html=True
+        )
+
+        if aircraft_type == "Freighter":
+
+            expected_flight_volume_kg = st.slider(
+                "expected flight volume kg",
+                40000,
+                100000,
+                75000
+            )
+
         else:
-            gauge_color = "#28a745"
-            st.success(f"Operationally stable utilization forecast ({predicted_occupancy_rate:.2f}%).")
 
-        # =================================================
-        # GAUGE VISUALIZATION (THEME RESPONSIVE)
-        # =================================================
-        fig_gauge = go.Figure(
-            go.Indicator(
-                mode="gauge+number",
-                value=predicted_occupancy_rate,
-                number={
-                    "valueformat": ".2f",
-                    "suffix": "%",
-                    "font": {"size": 36, "color": gauge_color}
-                },
-                title={"text": "Forecasted Space Occupancy Rate"},
-                gauge={
-                    "axis": {"range": [0, 100]},
-                    "bar": {"color": gauge_color, "thickness": 0.25},
-                    # "bgcolor" removed to seamlessly pick up light/dark chart backgrounds
-                    "steps": [
-                        {"range": [0, 75], "color": "rgba(40,167,69,0.15)"},
-                        {"range": [75, 90], "color": "rgba(255,193,7,0.15)"},
-                        {"range": [90, 100], "color": "rgba(220,53,69,0.15)"}
+            expected_flight_volume_kg = st.slider(
+                "expected flight volume kg",
+                1000,
+                5000,
+                3000
+            )
+
+        if flow_direction_input == "Import":
+
+            build_up_status_input = st.selectbox(
+                "build up status",
+                ["Not Applicable"],
+                disabled=True
+            )
+
+        else:
+
+            build_up_status_input = st.selectbox(
+                "build up status",
+                ["Not Started", "In Progress"]
+            )
+
+        uld_count = st.slider(
+            "uld count",
+            0,
+            250,
+            155
+        )
+
+        hours_until_arrival = st.slider(
+            "hours until arrival",
+            0,
+            72,
+            12
+        )
+
+        hours_until_departure = st.slider(
+            "hours until departure",
+            0,
+            72,
+            18
+        )
+
+        historical_dwell_lag_24h = st.slider(
+            "historical dwell lag 24h",
+            6.0,
+            55.0,
+            36.0,
+            step=0.1
+        )
+
+    # =========================================================
+    # COLUMN 3
+    # =========================================================
+    with col_right:
+
+        st.markdown(
+            '<div class="category-header"><h4>Chronological Context</h4></div>',
+            unsafe_allow_html=True
+        )
+
+        forecast_horizon = st.slider(
+            "forecast horizon hours",
+            24,
+            72,
+            24,
+            step=1
+        )
+
+        congestion_index = st.slider(
+            "congestion index",
+            0.0,
+            1.0,
+            0.8533,
+            step=0.0001
+        )
+
+        forecasted_demand_next_24h = st.number_input(
+            "forecasted demand next 24h",
+            value=269.95
+        )
+
+        forecasted_demand_next_48h = st.number_input(
+            "forecasted demand next 48h",
+            value=539.90
+        )
+
+        forecasted_demand_next_72h = st.number_input(
+            "forecasted demand next 72h",
+            value=809.86
+        )
+
+        selected_date = st.date_input(
+            "target date",
+            datetime.date.today()
+        )
+
+        selected_time = st.time_input(
+            "target time",
+            datetime.datetime.now().time()
+        )
+
+    # =========================================================
+    # EXECUTE BUTTON
+    # =========================================================
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    execute_analysis = st.button(
+        "RUN PREDICTIVE CAPACITY ANALYSIS",
+        type="primary"
+    )
+
+    st.markdown("---")
+
+    # =========================================================
+    # PREDICTION EXECUTION
+    # =========================================================
+    if execute_analysis:
+
+        try:
+
+            base_datetime = datetime.datetime.combine(
+                selected_date,
+                selected_time
+            )
+
+            future_datetime = (
+                base_datetime +
+                datetime.timedelta(hours=forecast_horizon)
+            )
+
+            hour_of_day = future_datetime.hour
+            day_of_week = future_datetime.weekday()
+            month_of_year = future_datetime.month
+
+            adjusted_congestion = min(
+                1.0,
+                congestion_index + (forecast_horizon * 0.0025)
+            )
+
+            adjusted_arrival = max(
+                0,
+                hours_until_arrival - forecast_horizon
+            )
+
+            adjusted_departure = max(
+                0,
+                hours_until_departure - forecast_horizon
+            )
+
+            if forecast_horizon <= 24:
+                adjusted_demand = forecasted_demand_next_24h
+
+            elif forecast_horizon <= 48:
+                adjusted_demand = forecasted_demand_next_48h
+
+            else:
+                adjusted_demand = forecasted_demand_next_72h
+
+            input_data = {
+
+                "uld_count": [float(uld_count)],
+
+                "expected_flight_volume_kg": [
+                    float(expected_flight_volume_kg)
+                ],
+
+                "hours_until_arrival": [
+                    float(adjusted_arrival)
+                ],
+
+                "hours_until_departure": [
+                    float(adjusted_departure)
+                ],
+
+                "historical_dwell_lag_24h": [
+                    float(historical_dwell_lag_24h)
+                ],
+
+                "congestion_index": [
+                    float(adjusted_congestion)
+                ],
+
+                "forecasted_demand_next_24h": [
+                    float(forecasted_demand_next_24h)
+                ],
+
+                "forecasted_demand_next_48h": [
+                    float(forecasted_demand_next_48h)
+                ],
+
+                "forecasted_demand_next_72h": [
+                    float(forecasted_demand_next_72h)
+                ],
+
+                "hour_of_day": [int(hour_of_day)],
+                "day_of_week": [int(day_of_week)],
+                "month_of_year": [int(month_of_year)],
+
+                "flow_direction": [
+                    flow_direction_input
+                ],
+
+                "storage_type": [
+                    storage_type_input
+                ],
+
+                "iata_shc": [
+                    iata_shc_input
+                ],
+
+                "build_up_status": [
+                    build_up_status_input
+                ],
+
+                "route": [route_input]
+            }
+
+            df_input = pd.DataFrame(input_data)
+
+            low_cardinality_headers = (
+                production_ohe.get_feature_names_out(
+                    low_cardinality_categoricals
+                )
+            )
+
+            scaled_num = pd.DataFrame(
+                production_scaler.transform(
+                    df_input[numerical_features]
+                ),
+                columns=numerical_features
+            )
+
+            scaled_ohe = pd.DataFrame(
+                production_ohe.transform(
+                    df_input[
+                        low_cardinality_categoricals
                     ]
-                }
+                ),
+                columns=low_cardinality_headers
+            )
+
+            scaled_te = production_te.transform(
+                df_input[
+                    high_cardinality_categorical
+                ]
+            )
+
+            X_inference = pd.concat([
+                scaled_num,
+                scaled_ohe,
+                scaled_te
+            ], axis=1)
+
+            predicted_occupancy_rate = (
+                production_model.predict(
+                    X_inference
+                )[0]
+            )
+
+            predicted_occupancy_rate = np.clip(
+                predicted_occupancy_rate,
+                5.0,
+                100.0
+            )
+
+            zone_capacity_m3 = STORAGE_CAPACITIES[
+                (
+                    storage_type_input,
+                    flow_direction_input
+                )
+            ]
+
+            computed_occupied_m3 = (
+                predicted_occupancy_rate / 100
+            ) * zone_capacity_m3
+
+            computed_available_m3 = (
+                zone_capacity_m3 -
+                computed_occupied_m3
+            )
+
+            # =================================================
+            # RESULT SECTION
+            # =================================================
+            st.header(
+                "Real-Time Operational Space Diagnostics"
+            )
+
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+
+            with metric_col1:
+                st.metric(
+                    "Total Structural Capacity",
+                    f"{zone_capacity_m3:,.0f} m3"
+                )
+
+            with metric_col2:
+                st.metric(
+                    "Predicted Occupied Volume",
+                    f"{computed_occupied_m3:,.2f} m3"
+                )
+
+            with metric_col3:
+                st.metric(
+                    "Available Net Open Space",
+                    f"{computed_available_m3:,.2f} m3"
+                )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            if predicted_occupancy_rate >= 90:
+
+                gauge_color = "#dc3545"
+
+                st.error(
+                    f"Critical saturation threshold detected ({predicted_occupancy_rate:.2f}%)."
+                )
+
+            elif predicted_occupancy_rate >= 75:
+
+                gauge_color = "#ffc107"
+
+                st.warning(
+                    f"High congestion environment predicted ({predicted_occupancy_rate:.2f}%)."
+                )
+
+            else:
+
+                gauge_color = "#28a745"
+
+                st.success(
+                    f"Operationally stable utilization forecast ({predicted_occupancy_rate:.2f}%)."
+                )
+
+            # =================================================
+            # GAUGE
+            # =================================================
+            fig_gauge = go.Figure(
+                go.Indicator(
+                    mode="gauge+number",
+                    value=predicted_occupancy_rate,
+                    number={
+                        "valueformat": ".2f",
+                        "suffix": "%",
+                        "font": {
+                            "size": 36,
+                            "color": gauge_color
+                        }
+                    },
+                    title={
+                        "text": "Forecasted Space Occupancy Rate"
+                    },
+                    gauge={
+                        "axis": {
+                            "range": [0, 100]
+                        },
+                        "bar": {
+                            "color": gauge_color,
+                            "thickness": 0.25
+                        },
+                        "steps": [
+                            {
+                                "range": [0, 75],
+                                "color": "rgba(40,167,69,0.15)"
+                            },
+                            {
+                                "range": [75, 90],
+                                "color": "rgba(255,193,7,0.15)"
+                            },
+                            {
+                                "range": [90, 100],
+                                "color": "rgba(220,53,69,0.15)"
+                            }
+                        ]
+                    }
+                )
+            )
+
+            fig_gauge.update_layout(
+                margin=dict(l=30, r=30, t=60, b=20),
+                height=350,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+
+            st.plotly_chart(
+                fig_gauge,
+                use_container_width=True
+            )
+
+            # =================================================
+            # SUMMARY TABLE
+            # =================================================
+            st.subheader("Forecast Summary")
+
+            summary_df = pd.DataFrame({
+
+                "Parameter": [
+                    "Forecast Horizon",
+                    "Target Forecast Timestamp",
+                    "Flow Direction",
+                    "Storage Type",
+                    "Cargo Category",
+                    "Selected Route",
+                    "Aircraft Type",
+                    "Adjusted Congestion Index"
+                ],
+
+                "Value": [
+                    f"{forecast_horizon} Hours",
+                    future_datetime.strftime("%Y-%m-%d %H:%M"),
+                    flow_direction_input,
+                    storage_type_input,
+                    iata_shc_input,
+                    route_input,
+                    aircraft_type,
+                    str(round(adjusted_congestion, 4))
+                ]
+            })
+
+            st.dataframe(
+                summary_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        except Exception as e:
+
+            st.error(
+                f"Inference execution failed: {e}"
+            )
+
+# =========================================================
+# TAB 2 : ANALYTICS DASHBOARD
+# =========================================================
+with tab2:
+
+    st.subheader(
+        "Warehouse Operations Analytics Dashboard"
+    )
+
+    # =====================================================
+    # FILTERS
+    # =====================================================
+    filter_col1, filter_col2 = st.columns(2)
+
+    with filter_col1:
+
+        storage_filter = st.multiselect(
+            "Filter Storage Type",
+            options=sorted(
+                analytics_df['storage_type']
+                .unique()
+                .tolist()
+            ),
+            default=sorted(
+                analytics_df['storage_type']
+                .unique()
+                .tolist()
             )
         )
 
-        fig_gauge.update_layout(
-            margin=dict(l=30, r=30, t=60, b=20),
-            height=350,
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
+    with filter_col2:
+
+        cargo_filter = st.multiselect(
+            "Filter Cargo Type",
+            options=sorted(
+                analytics_df['iata_shc']
+                .unique()
+                .tolist()
+            ),
+            default=sorted(
+                analytics_df['iata_shc']
+                .unique()
+                .tolist()
+            )
         )
 
-        st.plotly_chart(fig_gauge, use_container_width=True)
+    # =====================================================
+    # FILTER DATA
+    # =====================================================
+    filtered_df = analytics_df[
 
-        # =================================================
-        # FORECAST SUMMARY
-        # =================================================
-        st.subheader("Forecast Summary")
+        (
+            analytics_df['storage_type']
+            .isin(storage_filter)
+        )
 
-        summary_df = pd.DataFrame({
-            "Parameter": [
-                "Forecast Horizon", "Target Forecast Timestamp", "Flow Direction", 
-                "Storage Type", "Cargo Category", "Selected Route", "Aircraft Type", "Adjusted Congestion Index"
-            ],
-            "Value": [
-                f"{forecast_horizon} Hours", future_datetime.strftime("%Y-%m-%d %H:%M"), flow_direction_input,
-                storage_type_input, iata_shc_input, route_input, aircraft_type, str(round(adjusted_congestion, 4))
+        &
+
+        (
+            analytics_df['iata_shc']
+            .isin(cargo_filter)
+        )
+    ]
+
+    # =====================================================
+    # KPI SECTION
+    # =====================================================
+    st.markdown("---")
+
+    k1, k2, k3, k4 = st.columns(4)
+
+    with k1:
+
+        avg_occ = (
+            filtered_df[
+                'warehouse_occupancy_percent'
+            ].mean()
+        )
+
+        st.metric(
+            "Average Occupancy",
+            f"{avg_occ:.2f}%"
+        )
+
+    with k2:
+
+        avg_dwell = (
+            filtered_df[
+                'historical_dwell_lag_24h'
+            ].mean()
+        )
+
+        st.metric(
+            "Average Dwell Lag",
+            f"{avg_dwell:.1f} hrs"
+        )
+
+    with k3:
+
+        avg_congestion = (
+            filtered_df[
+                'congestion_index'
+            ].mean()
+        )
+
+        st.metric(
+            "Average Congestion",
+            f"{avg_congestion:.2f}"
+        )
+
+    with k4:
+
+        avg_volume = (
+            filtered_df[
+                'expected_flight_volume_kg'
+            ].mean()
+        )
+
+        st.metric(
+            "Avg Flight Volume",
+            f"{avg_volume:,.0f} kg"
+        )
+
+    st.markdown("---")
+
+    # =====================================================
+    # CHART ROW 1
+    # =====================================================
+    row1_col1, row1_col2 = st.columns(2)
+
+    with row1_col1:
+
+        st.markdown(
+            "### Average Occupancy by Storage Type"
+        )
+
+        storage_summary = (
+            filtered_df.groupby(
+                'storage_type'
+            )[
+                'warehouse_occupancy_percent'
             ]
-        })
+            .mean()
+            .reset_index()
+        )
 
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        fig_storage = px.bar(
+            storage_summary,
+            x='storage_type',
+            y='warehouse_occupancy_percent',
+            text_auto=True
+        )
 
-    except Exception as e:
-        st.error(f"Inference execution failed: {e}")
+        fig_storage.update_layout(
+            height=350,
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            fig_storage,
+            use_container_width=True
+        )
+
+    with row1_col2:
+
+        st.markdown(
+            "### Cargo Category Distribution"
+        )
+
+        cargo_summary = (
+            filtered_df.groupby('iata_shc')
+            .size()
+            .reset_index(name='Count')
+        )
+
+        fig_cargo = px.bar(
+            cargo_summary,
+            x='iata_shc',
+            y='Count',
+            text_auto=True
+        )
+
+        fig_cargo.update_layout(
+            height=350,
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            fig_cargo,
+            use_container_width=True
+        )
+
+    st.markdown("---")
+
+    # =====================================================
+    # CHART ROW 2
+    # =====================================================
+    row2_col1, row2_col2 = st.columns(2)
+
+    with row2_col1:
+
+        st.markdown(
+            "### Congestion by Storage Type"
+        )
+
+        congestion_summary = (
+            filtered_df.groupby(
+                'storage_type'
+            )[
+                'congestion_index'
+            ]
+            .mean()
+            .reset_index()
+        )
+
+        fig_congestion = px.bar(
+            congestion_summary,
+            x='storage_type',
+            y='congestion_index',
+            text_auto=True
+        )
+
+        fig_congestion.update_layout(
+            height=350,
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            fig_congestion,
+            use_container_width=True
+        )
+
+    with row2_col2:
+
+        st.markdown(
+            "### Flight Volume by Cargo Type"
+        )
+
+        volume_summary = (
+            filtered_df.groupby(
+                'iata_shc'
+            )[
+                'expected_flight_volume_kg'
+            ]
+            .mean()
+            .reset_index()
+        )
+
+        fig_volume = px.bar(
+            volume_summary,
+            x='iata_shc',
+            y='expected_flight_volume_kg',
+            text_auto=True
+        )
+
+        fig_volume.update_layout(
+            height=350,
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            fig_volume,
+            use_container_width=True
+        )
+
+    st.markdown("---")
+
+    # =====================================================
+    # SIMPLE TREND GRAPH
+    # =====================================================
+    st.markdown(
+        "### Daily Occupancy Trend"
+    )
+
+    trend_df = (
+        filtered_df.groupby(
+            filtered_df['timestamp'].dt.date
+        )[
+            'warehouse_occupancy_percent'
+        ]
+        .mean()
+        .reset_index()
+    )
+
+    fig_trend = px.line(
+        trend_df,
+        x='timestamp',
+        y='warehouse_occupancy_percent',
+        markers=True
+    )
+
+    fig_trend.update_layout(
+        height=400
+    )
+
+    st.plotly_chart(
+        fig_trend,
+        use_container_width=True
+    )
